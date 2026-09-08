@@ -252,11 +252,10 @@
   [:pointer :int] :pointer
   sqlite3_column_blob-native
   [stmt idx]
-  (with-open [arena (ffi/confined-arena)]
-    (let [result (sqlite3_column_blob-native stmt idx)
-          size   (column-bytes stmt idx)
-          blob   (ffi/reinterpret result size arena)]
-      (enc/decode blob size))))
+  (let [result (sqlite3_column_blob-native stmt idx)
+        size   (column-bytes stmt idx)
+        blob   (ffi/reinterpret result size)]
+    (enc/decode blob size)))
 
 (defcfn column-type
   "sqlite3_column_type"
@@ -311,10 +310,9 @@
   (let [result (sqlite3-value-blob-native sqlite-value)]
     (if (ffi/null? result)
       nil
-      (with-open [arena (ffi/confined-arena)]
-        (let [^int size (value-bytes sqlite-value)
-              blob      (ffi/reinterpret result size arena)]
-          (enc/decode blob size))))))
+      (let [^int size (value-bytes sqlite-value)
+            blob      (ffi/reinterpret result size)]
+        (enc/decode blob size)))))
 
 (defcfn result-text
   "sqlite3_result_text"
