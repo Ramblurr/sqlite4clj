@@ -9,6 +9,7 @@
    [sqlite4clj.impl.ffi-wrapper :as ffi-wrapper :refer [defcfn]])
   (:import
    [java.nio.file Files]
+   [java.nio.file.attribute FileAttribute]
    [java.lang.foreign MemorySegment]))
 
 (set! *warn-on-reflection* true)
@@ -48,11 +49,16 @@
           ("x86-windows"
            "x86_64-windows"
            "amd64-windows") "sqlite3_x86_64-windows-gnu.dll")
-        temp-lib-filename (str "sqlite4clj_temp_" res-file)]
-    (copy-resource res-file temp-lib-filename)
-    (ffi-wrapper/set-library! temp-lib-filename)
-    ;; We delete once loaded
-    (Files/deleteIfExists (.toPath (io/file temp-lib-filename)))))
+        ;; One file per process. Concurrent JVMs must never share the inode
+        ;; that the dynamic linker maps.
+        temp-lib (Files/createTempFile "sqlite4clj_" (str "_" res-file)
+                   (make-array FileAttribute 0))]
+    (try
+      (copy-resource res-file (str temp-lib))
+      (ffi-wrapper/set-library! (str temp-lib))
+      (finally
+        ;; The mapping outlives the directory entry.
+        (Files/deleteIfExists temp-lib)))))
 
 (defn load-system-library []
   (ffi/load-system-library "sqlite3"))
