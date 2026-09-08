@@ -16,5 +16,12 @@
                     :extra-deps
                     {com.clojure-goes-fast/clj-async-profiler
                      {:mvn/version "1.6.2"}}}
+           :bench  {:extra-paths ["bench"]
+                    :extra-deps {org.hugoduncan/criterium {:mvn/version "0.5.245-ALPHA"}}
+                    :jvm-opts ["--enable-native-access=ALL-UNNAMED"
+                               "-Xms1g" "-Xmx1g" "-XX:+UseZGC"
+                               "-XX:+UnlockExperimentalVMOptions"
+                               "-XX:CompileCommand=blackhole,criterium.blackhole.Blackhole::consume"]
+                    :main-opts ["-m" "sqlite4clj.bench"]}
            :kaocha {:extra-deps {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
                     :main-opts  ["-m" "kaocha.runner"]}}}
