@@ -1,10 +1,9 @@
 (ns sqlite4clj.impl.api
   "These function map directly to SQLite's C API."
   (:require
+   [babashka.ffi :as ffi]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [coffi.ffi :as ffi]
-   [coffi.mem :as mem]
    [sqlite4clj.impl.encoding :as enc]
    [sqlite4clj.impl.ffi-wrapper :as ffi-wrapper :refer [defcfn]])
   (:import
@@ -61,7 +60,17 @@
         (Files/deleteIfExists temp-lib)))))
 
 (defn load-system-library []
-  (ffi/load-system-library "sqlite3"))
+  (let [library-name (System/mapLibraryName "sqlite3")
+        paths        (str/split (System/getProperty "java.library.path" "")
+                       (re-pattern (System/getProperty "path.separator")))
+        library-file (some (fn [path]
+                             (let [file (io/file path library-name)]
+                               (when (.isFile file) file)))
+                       paths)]
+    (reset! ffi-wrapper/lookup_
+      (if library-file
+        (ffi/load-library (.getAbsolutePath ^java.io.File library-file))
+        (ffi/load-system-library "sqlite3")))))
 
 ;; Load appropriate SQLite library
 (let [src (System/getProperty "sqlite4clj.native-lib")]
@@ -74,28 +83,25 @@
     (ffi-wrapper/set-library! src)))
 
 (defcfn initialize
-  sqlite3_initialize
-  [] ::mem/int)
+  "sqlite3_initialize"
+  [] :int)
 
-;; sqlite3_config is variadic in C; for SQLITE_CONFIG_MEMSTATUS the trailing
-;; argument is a single int. Declaring as (int, int) -> int works on the
-;; supported platforms (x86_64 + aarch64 on Linux/macOS) for this signature.
 (defcfn config-int
-  sqlite3_config
-  [::mem/int ::mem/int] ::mem/int)
+  "sqlite3_config"
+  [:int :& :int] :int)
 
 (defcfn memory-used
   "Bytes currently allocated by SQLite globally in this process.
   Returns 0 unless memstatus is enabled (see -Dsqlite4clj.memstatus=true)."
-  sqlite3_memory_used
-  [] ::mem/long)
+  "sqlite3_memory_used"
+  [] :long)
 
 (defcfn memory-highwater
   "High-water mark in bytes of SQLite's global allocator since process start
   (or since the last reset). Pass reset?=1 to reset the high-water mark.
   Returns 0 unless memstatus is enabled (see -Dsqlite4clj.memstatus=true)."
-  sqlite3_memory_highwater
-  [::mem/int] ::mem/long)
+  "sqlite3_memory_highwater"
+  [:int] :long)
 
 ;; SQLite's bundled binaries are built with SQLITE_DEFAULT_MEMSTATUS=0 so the
 ;; sqlite3_memory_used / sqlite3_memory_highwater counters are no-ops by
@@ -105,20 +111,21 @@
 (defonce init-lib
   (do
     (when (= "true" (System/getProperty "sqlite4clj.memstatus"))
+      #_{:clj-kondo/ignore [:invalid-arity]}
       (config-int SQLITE_CONFIG_MEMSTATUS 1))
     (initialize)))
 
 (defcfn free
-  sqlite3_free
-  [::mem/pointer] ::mem/void)
+  "sqlite3_free"
+  [:pointer] :void)
 
 (defcfn errmsg
-  sqlite3_errmsg
-  [::mem/pointer] ::mem/c-string)
+  "sqlite3_errmsg"
+  [:pointer] :string)
 
 (defcfn errstr
-  sqlite3_errstr
-  [::mem/int] ::mem/c-string)
+  "sqlite3_errstr"
+  [:int] :string)
 
 (defn sqlite-ex-info [pdb code data]
   (let [code-name (errstr code)
@@ -132,70 +139,69 @@
   (= code 0))
 
 (defcfn open-v2
-  "sqlite3_open_v2" [::mem/c-string ::mem/pointer ::mem/int
-                     ::mem/c-string] ::mem/int
+  "sqlite3_open_v2" [:string :pointer :int :string] :int
   sqlite3-open-native
   [filename flags vfs]
-  (with-open [arena (mem/confined-arena)]
-    (let [pdb           (mem/alloc-instance ::mem/pointer arena)
+  (with-open [arena (ffi/confined-arena)]
+    (let [pdb           (ffi/alloc arena :pointer)
           filename-utf8 (String/new (String/.getBytes filename "UTF-8") "UTF-8")
           vfs-utf8      (when vfs
                           (String/new (String/.getBytes vfs "UTF-8") "UTF-8"))
           code          (sqlite3-open-native filename-utf8
                           pdb flags vfs-utf8)]
       (if (sqlite-ok? code)
-        (mem/deserialize-from pdb ::mem/pointer)
+        (ffi/read pdb :pointer)
         (throw (sqlite-ex-info pdb code {:filename filename}))))))
 
 (defcfn close
-  sqlite3_close
-  [::mem/pointer] ::mem/int)
+  "sqlite3_close"
+  [:pointer] :int)
 
 (defcfn prepare-v3
   "sqlite3_prepare_v3"
-  [::mem/pointer ::mem/c-string ::mem/int
-   ::mem/int
-   ::mem/pointer ::mem/pointer] ::mem/int
+  [:pointer :string :int
+   :int
+   :pointer :pointer] :int
   sqlite3-prepare-native
   [pdb sql]
-  (with-open [arena (mem/confined-arena)]
-    (let [ppStmt (mem/alloc-instance ::mem/pointer arena)
+  (with-open [arena (ffi/confined-arena)]
+    (let [ppStmt (ffi/alloc arena :pointer)
           sql    (String/new (String/.getBytes sql "UTF-8") "UTF-8")
           code   (sqlite3-prepare-native pdb sql -1
                    0x01 ;; SQLITE_PREPARE_PERSISTENT
                    ppStmt
                    nil)]
       (if (sqlite-ok? code)
-        (mem/deserialize-from ppStmt ::mem/pointer)
+        (ffi/read ppStmt :pointer)
         (throw (sqlite-ex-info pdb code {:sql sql}))))))
 
 (defcfn reset
-  sqlite3_reset
-  [::mem/pointer] ::mem/int)
+  "sqlite3_reset"
+  [:pointer] :int)
 
 (defcfn clear-bindings
-  sqlite3_clear_bindings
-  [::mem/pointer] ::mem/int)
+  "sqlite3_clear_bindings"
+  [:pointer] :int)
 
 (defcfn bind-int
-  sqlite3_bind_int64
-  [::mem/pointer ::mem/int ::mem/long] ::mem/int)
+  "sqlite3_bind_int64"
+  [:pointer :int :long] :int)
 
 (defcfn bind-double
-  sqlite3_bind_double
-  [::mem/pointer ::mem/int ::mem/double] ::mem/int)
+  "sqlite3_bind_double"
+  [:pointer :int :double] :int)
 
 (defcfn bind-null
-  sqlite3_bind_null
-  [::mem/pointer ::mem/int] ::mem/int)
+  "sqlite3_bind_null"
+  [:pointer :int] :int)
 
-(def sqlite-static (mem/as-segment 0))
-(def sqlite-transient (mem/as-segment -1))
+(def sqlite-static (ffi/segment 0))
+(def sqlite-transient (ffi/segment -1))
 
 (defcfn bind-text
   "sqlite3_bind_text"
-  [::mem/pointer ::mem/int ::mem/c-string ::mem/int
-   ::mem/pointer] ::mem/int
+  [:pointer :int :string :int
+   :pointer] :int
   sqlite3-bind-text-native
   [pdb idx text]
   (let [text       (str text)
@@ -207,112 +213,112 @@
 
 (defcfn bind-blob
   "sqlite3_bind_blob"
-  [::mem/pointer ::mem/int ::mem/pointer ::mem/int
-   ::mem/pointer] ::mem/int
+  [:pointer :int :pointer :int
+   :pointer] :int
   sqlite3-bind-blob-native
   [pdb idx blob]
-  (with-open [arena (mem/confined-arena)]
+  (with-open [arena (ffi/confined-arena)]
     (let [segment (enc/encode arena blob)]
       (sqlite3-bind-blob-native pdb idx segment
         (MemorySegment/.byteSize segment)
         sqlite-transient))))
 
 (defcfn step
-  sqlite3_step
-  [::mem/pointer] ::mem/int)
+  "sqlite3_step"
+  [:pointer] :int)
 
 (defcfn column-count
-  sqlite3_column_count
-  [::mem/pointer] ::mem/int)
+  "sqlite3_column_count"
+  [:pointer] :int)
 
 (defcfn column-double
-  sqlite3_column_double
-  [::mem/pointer ::mem/int] ::mem/double)
+  "sqlite3_column_double"
+  [:pointer :int] :double)
 
 (defcfn column-int
-  sqlite3_column_int64
-  [::mem/pointer ::mem/int] ::mem/long)
+  "sqlite3_column_int64"
+  [:pointer :int] :long)
 
 (defcfn column-text
-  sqlite3_column_text
-  [::mem/pointer ::mem/int] ::mem/c-string)
+  "sqlite3_column_text"
+  [:pointer :int] :string)
 
 (defcfn column-bytes
-  sqlite3_column_bytes
-  [::mem/pointer ::mem/int] ::mem/int)
+  "sqlite3_column_bytes"
+  [:pointer :int] :int)
 
 (defcfn column-blob
   "sqlite3_column_blob"
-  [::mem/pointer ::mem/int] ::mem/pointer
+  [:pointer :int] :pointer
   sqlite3_column_blob-native
   [stmt idx]
-  (with-open [arena (mem/confined-arena)]
+  (with-open [arena (ffi/confined-arena)]
     (let [result (sqlite3_column_blob-native stmt idx)
           size   (column-bytes stmt idx)
-          blob   (mem/reinterpret result size arena)]
+          blob   (ffi/reinterpret result size arena)]
       (enc/decode blob size))))
 
 (defcfn column-type
-  sqlite3_column_type
-  [::mem/pointer ::mem/int] ::mem/int)
+  "sqlite3_column_type"
+  [:pointer :int] :int)
 
 (defcfn finalize
-  sqlite3_finalize
-  [::mem/pointer] ::mem/int)
+  "sqlite3_finalize"
+  [:pointer] :int)
 
 (defcfn create-function-v2
-  sqlite3_create_function_v2
-  [::mem/pointer  ;; db
-   ::mem/c-string ;; zFunctionName
-   ::mem/int      ;; nArg
-   ::mem/int      ;; eTextRep (includes flags)
-   ::mem/pointer  ;; pApp (user data)
-   ::mem/pointer  ;; xFunc (function pointer, not inline definition)
-   ::mem/pointer  ;; xStep (for aggregates)
-   ::mem/pointer  ;; xFinal (for aggregates)
-   ::mem/pointer] ;; xDestroy (destructor)
-  ::mem/int)
+  "sqlite3_create_function_v2"
+  [:pointer  ;; db
+   :string   ;; zFunctionName
+   :int      ;; nArg
+   :int      ;; eTextRep (includes flags)
+   :pointer  ;; pApp (user data)
+   :pointer  ;; xFunc (function pointer, not inline definition)
+   :pointer  ;; xStep (for aggregates)
+   :pointer  ;; xFinal (for aggregates)
+   :pointer] ;; xDestroy (destructor)
+  :int)
 
 (defcfn aggregate-context
-  sqlite3_aggregate_context
-  [::mem/pointer ::mem/int] ::mem/pointer)
+  "sqlite3_aggregate_context"
+  [:pointer :int] :pointer)
 
 (defcfn value-text
-  sqlite3_value_text
-  [::mem/pointer] ::mem/c-string)
+  "sqlite3_value_text"
+  [:pointer] :string)
 
 (defcfn value-int
-  sqlite3_value_int64
-  [::mem/pointer] ::mem/long)
+  "sqlite3_value_int64"
+  [:pointer] :long)
 
 (defcfn value-double
-  sqlite3_value_double
-  [::mem/pointer] ::mem/double)
+  "sqlite3_value_double"
+  [:pointer] :double)
 
 (defcfn value-type
-  sqlite3_value_type
-  [::mem/pointer] ::mem/int)
+  "sqlite3_value_type"
+  [:pointer] :int)
 
 (defcfn value-bytes
-  sqlite3_value_bytes
-  [::mem/pointer] ::mem/int)
+  "sqlite3_value_bytes"
+  [:pointer] :int)
 
 (defcfn value-blob
   "sqlite3_value_blob"
-  [::mem/pointer] ::mem/pointer
+  [:pointer] :pointer
   sqlite3-value-blob-native
   [sqlite-value]
   (let [result (sqlite3-value-blob-native sqlite-value)]
-    (if (mem/null? result)
+    (if (ffi/null? result)
       nil
-      (with-open [arena (mem/confined-arena)]
+      (with-open [arena (ffi/confined-arena)]
         (let [^int size (value-bytes sqlite-value)
-              blob      (mem/reinterpret result size arena)]
+              blob      (ffi/reinterpret result size arena)]
           (enc/decode blob size))))))
 
 (defcfn result-text
   "sqlite3_result_text"
-  [::mem/pointer ::mem/c-string ::mem/int ::mem/pointer] ::mem/void
+  [:pointer :string :int :pointer] :void
   sqlite3-result-text-native
   [context text]
   (let [text-bytes (String/.getBytes (str text) "UTF-8")]
@@ -322,16 +328,16 @@
       sqlite-transient)))
 
 (defcfn result-int
-  sqlite3_result_int64
-  [::mem/pointer ::mem/long] ::mem/void)
+  "sqlite3_result_int64"
+  [:pointer :long] :void)
 
 (defcfn result-double
-  sqlite3_result_double
-  [::mem/pointer ::mem/double] ::mem/void)
+  "sqlite3_result_double"
+  [:pointer :double] :void)
 
 (defcfn result-null
   "sqlite3_result_null"
-  [::mem/pointer] ::mem/void
+  [:pointer] :void
   sqlite3-result-null-native
   ([context]
    (sqlite3-result-null-native context))
@@ -340,17 +346,17 @@
 
 (defcfn result-blob
   "sqlite3_result_blob"
-  [::mem/pointer ::mem/pointer ::mem/int ::mem/pointer] ::mem/void
+  [:pointer :pointer :int :pointer] :void
   sqlite3-result-blob-native
   [context blob]
-  (with-open [arena (mem/confined-arena)]
+  (with-open [arena (ffi/confined-arena)]
     (let [segment   (enc/encode arena blob)]
     (sqlite3-result-blob-native context
       segment (MemorySegment/.byteSize segment) sqlite-transient))))
 
 (defcfn result-error
   "sqlite3_result_error"
-  [::mem/pointer ::mem/c-string ::mem/int] ::mem/void
+  [:pointer :string :int] :void
   sqlite3-result-error-native
   [context msg]
   (let [msg       (str msg)
@@ -360,36 +366,36 @@
       (count msg-bytes))))
 
 (defcfn column-database-name
-  sqlite3_column_database_name
-  [::mem/pointer ::mem/int] ::mem/c-string)
+  "sqlite3_column_database_name"
+  [:pointer :int] :string)
 
 (defcfn column-table-name
-  sqlite3_column_table_name
-  [::mem/pointer ::mem/int] ::mem/c-string)
+  "sqlite3_column_table_name"
+  [:pointer :int] :string)
 
 (defcfn column-origin-name
-  sqlite3_column_origin_name
-  [::mem/pointer ::mem/int] ::mem/c-string)
+  "sqlite3_column_origin_name"
+  [:pointer :int] :string)
 
 (defcfn column-name
   ;; The name of a result column is the value of the "AS" clause for that
   ;; column, if there is an AS clause. If there is no AS clause then the
   ;; name of the column is unspecified and may change from one release of
   ;; SQLite to the next.
-  sqlite3_column_name
-  [::mem/pointer ::mem/int] ::mem/c-string)
+  "sqlite3_column_name"
+  [:pointer :int] :string)
 
 (defcfn sqlite3-limit
   "https://sqlite.org/c3ref/limit.html"
-  sqlite3_limit
-  [::mem/pointer ::mem/int ::mem/int] ::mem/int)
+  "sqlite3_limit"
+  [:pointer :int :int] :int)
 
 (defcfn sqlite3-interrupt
-  "https://sqlite.org/c3ref/interrupt.html"  
-  sqlite3_interrupt
-  [::mem/pointer] ::mem/int)
+  "https://sqlite.org/c3ref/interrupt.html"
+  "sqlite3_interrupt"
+  [:pointer] :void)
 
 (defcfn sqlite3-is-interrupted
   "https://sqlite.org/c3ref/interrupt.html"
-  sqlite3_is_interrupted
-  [::mem/pointer] ::mem/int)
+  "sqlite3_is_interrupted"
+  [:pointer] :int)
