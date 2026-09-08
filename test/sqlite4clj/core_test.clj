@@ -6,6 +6,14 @@
 
 (use-fixtures :once test-fixture)
 
+(deftest native-values-round-trip
+  (with-db [db (test-db)]
+    (doseq [value [Long/MIN_VALUE Long/MAX_VALUE 1.25 "世界 🌍" "" nil]]
+      (is (= [value] (d/q (:writer db) ["SELECT ?" value]))))
+    (let [[[native-empty encoded-empty]]
+          (d/q (:writer db) ["SELECT x'', ?" (byte-array 0)])]
+      (is (= [[] []] [(vec native-empty) (vec encoded-empty)])))))
+
 (deftest pool-objects-are-references
   (testing "Ensure pool objects are references to connections."
     (with-db [db (test-db)]

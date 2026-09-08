@@ -1,24 +1,17 @@
 (ns sqlite4clj.impl.ffi-wrapper
-  (:require [coffi.ffi :as ffi]
-            [clojure.java.io :as io])
-  (:import [java.lang.foreign Arena SymbolLookup]))
-
-(defonce ^Arena sqlite-lookup-arena
-  (Arena/global))
+  (:require [babashka.ffi :as ffi]
+            [clojure.java.io :as io]))
 
 (def lookup_ (atom nil))
 
 (defn set-library! [file-name]
   (reset! lookup_
-    (when file-name
-      (SymbolLookup/libraryLookup (.getAbsolutePath (io/file file-name))
-        sqlite-lookup-arena))))
+          (when file-name
+            (ffi/load-library (.getAbsolutePath (io/file file-name))))))
 
- (defn find-symbol [sym]
-  (if-let [^SymbolLookup lookup @lookup_]
-    (-> lookup (.find (name sym)) (.orElse nil))
-    (ffi/find-symbol sym)))
-
-(defmacro defcfn [& args]
-  `(with-redefs [coffi.ffi/find-symbol find-symbol]
-     (coffi.ffi/defcfn ~@args)))
+(defmacro defcfn [name & args]
+  (let [[doc args] (if (and (string? (first args))
+                            (not (vector? (second args))))
+                     [[(first args)] (next args)]
+                     [nil args])]
+    `(ffi/defcfn ~name ~@doc {:library lookup_} ~@args)))
