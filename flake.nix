@@ -4,13 +4,11 @@
     nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1"; # tracks nixpkgs unstable branch
     flakelight.url = "github:nix-community/flakelight";
     flakelight.inputs.nixpkgs.follows = "nixpkgs";
-    zig.url = "github:mitchellh/zig-overlay";
   };
   outputs =
     {
       self,
       flakelight,
-      zig,
       ...
     }:
     flakelight ./. {
@@ -27,11 +25,9 @@
           javaVersion = "25";
           jdk = pkgs."jdk${javaVersion}";
           clojure = pkgs.clojure.override { inherit jdk; };
-          zigpkgs = zig.packages.${pkgs.system};
         in
         {
           packages = [
-            zigpkgs."0.15.2"
             clojure
             jdk
             pkgs.clojure-lsp
@@ -39,12 +35,12 @@
             pkgs.cljfmt
             pkgs.babashka
             pkgs.git
+            pkgs.zig_0_16
           ];
         };
       flakelight.builtinFormatters = false;
       formatters = pkgs: {
         "*.nix" = "${pkgs.nixfmt}/bin/nixfmt";
-        "*.clj" = "${pkgs.cljfmt}/bin/cljfmt fix";
       };
     };
 }
