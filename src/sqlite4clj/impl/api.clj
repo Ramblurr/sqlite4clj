@@ -70,8 +70,10 @@
       (ffi/load-library (.getAbsolutePath ^java.io.File library-file))
       (ffi/load-system-library "sqlite3"))))
 
-;; Load appropriate SQLite library
-(def sqlite-library
+;; Reuse the initialized library on namespace reload. A second bundled copy
+;; would be uninitialized (SQLITE_OMIT_AUTOINIT), and existing handles would
+;; still belong to the first copy.
+(defonce sqlite-library
   (let [src (System/getProperty "sqlite4clj.native-lib")]
     (cond
       ;; default to bundled
