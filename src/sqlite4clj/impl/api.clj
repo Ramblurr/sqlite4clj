@@ -4,8 +4,7 @@
    [babashka.ffi :as ffi]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [sqlite4clj.impl.encoding :as enc]
-   [sqlite4clj.impl.ffi-wrapper :as ffi-wrapper :refer [defcfn]])
+   [sqlite4clj.impl.encoding :as enc])
   (:import
    [java.nio.file Files]
    [java.nio.file.attribute FileAttribute]
@@ -54,7 +53,7 @@
                    (make-array FileAttribute 0))]
     (try
       (copy-resource res-file (str temp-lib))
-      (ffi-wrapper/set-library! (str temp-lib))
+      (ffi/load-library (str temp-lib))
       (finally
         ;; The mapping outlives the directory entry.
         (Files/deleteIfExists temp-lib)))))
@@ -67,39 +66,41 @@
                              (let [file (io/file path library-name)]
                                (when (.isFile file) file)))
                        paths)]
-    (reset! ffi-wrapper/lookup_
-      (if library-file
-        (ffi/load-library (.getAbsolutePath ^java.io.File library-file))
-        (ffi/load-system-library "sqlite3")))))
+    (if library-file
+      (ffi/load-library (.getAbsolutePath ^java.io.File library-file))
+      (ffi/load-system-library "sqlite3"))))
 
 ;; Load appropriate SQLite library
-(let [src (System/getProperty "sqlite4clj.native-lib")]
-  (cond
-    ;; default to bundled
-    (or (nil? src)
-      (= src "bundled")) (load-bundled-library)
-    (= src "system")     (load-system-library)
-    :else
-    (ffi-wrapper/set-library! src)))
+(def sqlite-library
+  (let [src (System/getProperty "sqlite4clj.native-lib")]
+    (cond
+      ;; default to bundled
+      (or (nil? src)
+        (= src "bundled")) (load-bundled-library)
+      (= src "system")     (load-system-library)
+      :else
+      (ffi/load-library (.getAbsolutePath (io/file src))))))
 
-(defcfn initialize
+(ffi/defcfn initialize {:library sqlite-library}
   "sqlite3_initialize"
   [] :int)
 
-(defcfn config-int
+(ffi/defcfn config-int {:library sqlite-library}
   "sqlite3_config"
   [:int :& :int] :int)
 
-(defcfn memory-used
+(ffi/defcfn memory-used
   "Bytes currently allocated by SQLite globally in this process.
   Returns 0 unless memstatus is enabled (see -Dsqlite4clj.memstatus=true)."
+  {:library sqlite-library}
   "sqlite3_memory_used"
   [] :long)
 
-(defcfn memory-highwater
+(ffi/defcfn memory-highwater
   "High-water mark in bytes of SQLite's global allocator since process start
   (or since the last reset). Pass reset?=1 to reset the high-water mark.
   Returns 0 unless memstatus is enabled (see -Dsqlite4clj.memstatus=true)."
+  {:library sqlite-library}
   "sqlite3_memory_highwater"
   [:int] :long)
 
@@ -115,15 +116,15 @@
       (config-int SQLITE_CONFIG_MEMSTATUS 1))
     (initialize)))
 
-(defcfn free
+(ffi/defcfn free {:library sqlite-library}
   "sqlite3_free"
   [:pointer] :void)
 
-(defcfn errmsg
+(ffi/defcfn errmsg {:library sqlite-library}
   "sqlite3_errmsg"
   [:pointer] :string)
 
-(defcfn errstr
+(ffi/defcfn errstr {:library sqlite-library}
   "sqlite3_errstr"
   [:int] :string)
 
@@ -138,7 +139,7 @@
 (defn sqlite-ok? [code]
   (= code 0))
 
-(defcfn open-v2
+(ffi/defcfn open-v2 {:library sqlite-library}
   "sqlite3_open_v2" [:string :pointer :int :string] :int
   sqlite3-open-native
   [filename flags vfs]
@@ -153,11 +154,11 @@
         (ffi/read pdb :pointer)
         (throw (sqlite-ex-info pdb code {:filename filename}))))))
 
-(defcfn close
+(ffi/defcfn close {:library sqlite-library}
   "sqlite3_close"
   [:pointer] :int)
 
-(defcfn prepare-v3
+(ffi/defcfn prepare-v3 {:library sqlite-library}
   "sqlite3_prepare_v3"
   [:pointer :string :int
    :int
@@ -175,30 +176,30 @@
         (ffi/read ppStmt :pointer)
         (throw (sqlite-ex-info pdb code {:sql sql}))))))
 
-(defcfn reset
+(ffi/defcfn reset {:library sqlite-library}
   "sqlite3_reset"
   [:pointer] :int)
 
-(defcfn clear-bindings
+(ffi/defcfn clear-bindings {:library sqlite-library}
   "sqlite3_clear_bindings"
   [:pointer] :int)
 
-(defcfn bind-int
+(ffi/defcfn bind-int {:library sqlite-library}
   "sqlite3_bind_int64"
   [:pointer :int :long] :int)
 
-(defcfn bind-double
+(ffi/defcfn bind-double {:library sqlite-library}
   "sqlite3_bind_double"
   [:pointer :int :double] :int)
 
-(defcfn bind-null
+(ffi/defcfn bind-null {:library sqlite-library}
   "sqlite3_bind_null"
   [:pointer :int] :int)
 
 (def sqlite-static (ffi/segment 0))
 (def sqlite-transient (ffi/segment -1))
 
-(defcfn bind-text
+(ffi/defcfn bind-text {:library sqlite-library}
   "sqlite3_bind_text"
   [:pointer :int :string :int
    :pointer] :int
@@ -211,7 +212,7 @@
       (count text-bytes)
       sqlite-transient)))
 
-(defcfn bind-blob
+(ffi/defcfn bind-blob {:library sqlite-library}
   "sqlite3_bind_blob"
   [:pointer :int :pointer :int
    :pointer] :int
@@ -223,31 +224,31 @@
         (MemorySegment/.byteSize segment)
         sqlite-transient))))
 
-(defcfn step
+(ffi/defcfn step {:library sqlite-library}
   "sqlite3_step"
   [:pointer] :int)
 
-(defcfn column-count
+(ffi/defcfn column-count {:library sqlite-library}
   "sqlite3_column_count"
   [:pointer] :int)
 
-(defcfn column-double
+(ffi/defcfn column-double {:library sqlite-library}
   "sqlite3_column_double"
   [:pointer :int] :double)
 
-(defcfn column-int
+(ffi/defcfn column-int {:library sqlite-library}
   "sqlite3_column_int64"
   [:pointer :int] :long)
 
-(defcfn column-text
+(ffi/defcfn column-text {:library sqlite-library}
   "sqlite3_column_text"
   [:pointer :int] :string)
 
-(defcfn column-bytes
+(ffi/defcfn column-bytes {:library sqlite-library}
   "sqlite3_column_bytes"
   [:pointer :int] :int)
 
-(defcfn column-blob
+(ffi/defcfn column-blob {:library sqlite-library}
   "sqlite3_column_blob"
   [:pointer :int] :pointer
   sqlite3_column_blob-native
@@ -257,15 +258,15 @@
         blob   (ffi/reinterpret result size)]
     (enc/decode blob size)))
 
-(defcfn column-type
+(ffi/defcfn column-type {:library sqlite-library}
   "sqlite3_column_type"
   [:pointer :int] :int)
 
-(defcfn finalize
+(ffi/defcfn finalize {:library sqlite-library}
   "sqlite3_finalize"
   [:pointer] :int)
 
-(defcfn create-function-v2
+(ffi/defcfn create-function-v2 {:library sqlite-library}
   "sqlite3_create_function_v2"
   [:pointer  ;; db
    :string   ;; zFunctionName
@@ -278,31 +279,31 @@
    :pointer] ;; xDestroy (destructor)
   :int)
 
-(defcfn aggregate-context
+(ffi/defcfn aggregate-context {:library sqlite-library}
   "sqlite3_aggregate_context"
   [:pointer :int] :pointer)
 
-(defcfn value-text
+(ffi/defcfn value-text {:library sqlite-library}
   "sqlite3_value_text"
   [:pointer] :string)
 
-(defcfn value-int
+(ffi/defcfn value-int {:library sqlite-library}
   "sqlite3_value_int64"
   [:pointer] :long)
 
-(defcfn value-double
+(ffi/defcfn value-double {:library sqlite-library}
   "sqlite3_value_double"
   [:pointer] :double)
 
-(defcfn value-type
+(ffi/defcfn value-type {:library sqlite-library}
   "sqlite3_value_type"
   [:pointer] :int)
 
-(defcfn value-bytes
+(ffi/defcfn value-bytes {:library sqlite-library}
   "sqlite3_value_bytes"
   [:pointer] :int)
 
-(defcfn value-blob
+(ffi/defcfn value-blob {:library sqlite-library}
   "sqlite3_value_blob"
   [:pointer] :pointer
   sqlite3-value-blob-native
@@ -314,7 +315,7 @@
             blob      (ffi/reinterpret result size)]
         (enc/decode blob size)))))
 
-(defcfn result-text
+(ffi/defcfn result-text {:library sqlite-library}
   "sqlite3_result_text"
   [:pointer :string :int :pointer] :void
   sqlite3-result-text-native
@@ -325,15 +326,15 @@
       (count text-bytes)
       sqlite-transient)))
 
-(defcfn result-int
+(ffi/defcfn result-int {:library sqlite-library}
   "sqlite3_result_int64"
   [:pointer :long] :void)
 
-(defcfn result-double
+(ffi/defcfn result-double {:library sqlite-library}
   "sqlite3_result_double"
   [:pointer :double] :void)
 
-(defcfn result-null
+(ffi/defcfn result-null {:library sqlite-library}
   "sqlite3_result_null"
   [:pointer] :void
   sqlite3-result-null-native
@@ -342,7 +343,7 @@
   ([context _]
    (sqlite3-result-null-native context)))
 
-(defcfn result-blob
+(ffi/defcfn result-blob {:library sqlite-library}
   "sqlite3_result_blob"
   [:pointer :pointer :int :pointer] :void
   sqlite3-result-blob-native
@@ -352,7 +353,7 @@
     (sqlite3-result-blob-native context
       segment (MemorySegment/.byteSize segment) sqlite-transient))))
 
-(defcfn result-error
+(ffi/defcfn result-error {:library sqlite-library}
   "sqlite3_result_error"
   [:pointer :string :int] :void
   sqlite3-result-error-native
@@ -363,19 +364,19 @@
       (String/new msg-bytes "UTF-8")
       (count msg-bytes))))
 
-(defcfn column-database-name
+(ffi/defcfn column-database-name {:library sqlite-library}
   "sqlite3_column_database_name"
   [:pointer :int] :string)
 
-(defcfn column-table-name
+(ffi/defcfn column-table-name {:library sqlite-library}
   "sqlite3_column_table_name"
   [:pointer :int] :string)
 
-(defcfn column-origin-name
+(ffi/defcfn column-origin-name {:library sqlite-library}
   "sqlite3_column_origin_name"
   [:pointer :int] :string)
 
-(defcfn column-name
+(ffi/defcfn column-name {:library sqlite-library}
   ;; The name of a result column is the value of the "AS" clause for that
   ;; column, if there is an AS clause. If there is no AS clause then the
   ;; name of the column is unspecified and may change from one release of
@@ -383,17 +384,20 @@
   "sqlite3_column_name"
   [:pointer :int] :string)
 
-(defcfn sqlite3-limit
+(ffi/defcfn sqlite3-limit
   "https://sqlite.org/c3ref/limit.html"
+  {:library sqlite-library}
   "sqlite3_limit"
   [:pointer :int :int] :int)
 
-(defcfn sqlite3-interrupt
+(ffi/defcfn sqlite3-interrupt
   "https://sqlite.org/c3ref/interrupt.html"
+  {:library sqlite-library}
   "sqlite3_interrupt"
   [:pointer] :void)
 
-(defcfn sqlite3-is-interrupted
+(ffi/defcfn sqlite3-is-interrupted
   "https://sqlite.org/c3ref/interrupt.html"
+  {:library sqlite-library}
   "sqlite3_is_interrupted"
   [:pointer] :int)

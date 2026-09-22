@@ -2,14 +2,13 @@
   (:require
    [babashka.ffi :as ffi]
    [sqlite4clj.core :as d]
-   [sqlite4clj.impl.api :as api]
-   [sqlite4clj.impl.ffi-wrapper :refer [defcfn]]))
+   [sqlite4clj.impl.api :as api]))
 
 ;; -----------------------------
 ;; SESSION extension
 ;; https://sqlite.org/sessionintro.html
 
-(defcfn session-create
+(ffi/defcfn session-create {:library api/sqlite-library}
   "sqlite3session_create"
   [:pointer :string :pointer] :int
   sqlite3session-create-native
@@ -21,15 +20,15 @@
         (ffi/read ppSession :pointer)
         (throw (api/sqlite-ex-info pdb code {}))))))
 
-(defcfn session-attach
+(ffi/defcfn session-attach {:library api/sqlite-library}
   "sqlite3session_attach"
   [:pointer :string] :int)
 
-(defcfn session-delete
+(ffi/defcfn session-delete {:library api/sqlite-library}
   "sqlite3session_delete"
   [:pointer] :void)
 
-(defcfn session-changeset
+(ffi/defcfn session-changeset {:library api/sqlite-library}
   "sqlite3session_changeset"
   [:pointer :pointer :pointer] :int
   sqlite3session-patchset-native
@@ -45,7 +44,7 @@
          (ffi/read ppPatchset :pointer)]
         (throw (api/sqlite-ex-info pdb code {}))))))
 
-(defcfn changeset-invert
+(ffi/defcfn changeset-invert {:library api/sqlite-library}
   "sqlite3changeset_invert"
   [:int :pointer
    :pointer :pointer] :int
@@ -62,7 +61,7 @@
          (ffi/read ppOutSet :pointer)]
         (throw (api/sqlite-ex-info pdb code {}))))))
 
-(defcfn changeset-apply
+(ffi/defcfn changeset-apply {:library api/sqlite-library}
   "sqlite3changeset_apply"
   [:pointer ;; db
    :int     ;; size of changeset
@@ -107,7 +106,7 @@
         (api/free pInvertSet)
         (reset! session nil)))))
 
-(defcfn changeset-start
+(ffi/defcfn changeset-start {:library api/sqlite-library}
   "sqlite3changeset_start"
   [:pointer ;; changeset iterator
    :int     ;; size of changeset
@@ -123,12 +122,12 @@
         (ffi/read ppChangesetIter :pointer)
         (throw (api/sqlite-ex-info pdb code {}))))))
 
-(defcfn changeset-next
+(ffi/defcfn changeset-next {:library api/sqlite-library}
   "sqlite3changeset_next" [:pointer] :int)
 
 (def op->statemen {18 "INSERT" 9  "DELETE" 23 "UPDATE"})
 
-(defcfn changeset-op
+(ffi/defcfn changeset-op {:library api/sqlite-library}
   "sqlite3changeset_op"
   [:pointer ;; IN: changeset iterator
    :pointer ;; OUT: table name
@@ -155,7 +154,7 @@
            false true)]
         (throw (api/sqlite-ex-info pdb code {}))))))
 
-(defcfn changeset-finalize
+(ffi/defcfn changeset-finalize {:library api/sqlite-library}
   "sqlite3changeset_finalize" [:pointer] :int)
 
 (defn view-session-changeset
